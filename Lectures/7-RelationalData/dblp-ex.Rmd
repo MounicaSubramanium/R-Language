@@ -1,0 +1,110 @@
+---
+title: "DBLP Example"
+author: "Kylie Ariel Bemis"
+date: "2/6/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Example
+
+Load packages.
+
+```{r}
+library(tidyverse)
+library(dbplyr)
+library(RSQLite)
+```
+
+Connect to database.
+
+```{r}
+dbpath <- paste0("~/Documents/Northeastern/",
+                 "Courses/DS5110-Spring2019/data/",
+                 "DBLP-CSR-sqlite/dblp.db")
+con <- dbConnect(SQLite(), dbname=dbpath)
+```
+
+Connect to "general" and "author" tables.
+
+```{r}
+dblp_main <- tbl(con, "general")
+dblp_authors <- tbl(con, "authors")
+```
+
+Calculate the total number of distinct authors in the dataset.
+
+```{r}
+dblp_authors %>%
+  summarise(num_papers = n(),
+            num_authors = n_distinct(name))
+```
+
+Calculate and plot the number of distinct authors published each year.
+
+```{r}
+dblp_authors %>%
+  left_join(dblp_main) %>%
+  group_by(year) %>%
+  summarise(num_authors = n_distinct(name)) %>%
+  collect() %>%
+  ggplot() +
+  geom_col(aes(x=year, y=num_authors))
+```
+
+Calculate and plot the number of papers published in CS, DE, SE, and TH.
+
+*Note: Some papers may belong to multiple areas. Using the approach below, we will count such a paper multiple times, once for each area. Since we are primarily interested in comparing between different areas of computer science, this is fine. However, if we wanted to count each paper only once, a different approach (adding an additional column for "interdisciplinary"?) would be required.*
+
+```{r}
+dblp_tidy <- dblp_authors %>%
+  left_join(dblp_main) %>%
+  select(k, year, conf, name, gender, prob, cs, de, se, th) %>%
+  collect() %>%
+  gather(key="area", value="indicator", cs, de, se, th) %>%
+  filter(indicator == 1) %>%
+  select(-indicator) %>%
+  filter(gender %in% c('M', 'F'))
+
+ggplot(dblp_tidy) + geom_bar(aes(x=area))
+```
+
+Plot the number of papers published in CS, DE, SE, and TH by gender.
+
+```{r}
+ggplot(dblp_tidy) + geom_bar(aes(x=area, fill=gender))
+```
+
+Plot the number of distinct men and women published in CS, DE, SE, and TH.
+
+```{r}
+dblp_tidy %>%
+  group_by(gender, area) %>%
+  summarise(count = n_distinct(name)) %>%
+  collect() %>%
+  ggplot() +
+  geom_col(aes(x=area, y=count, fill=gender))
+```
+
+Plot the proportion of distinct men and women published in CS, DE, SE, and TH.
+
+```{r}
+auth_area <- dblp_tidy %>%
+  group_by(area) %>%
+  summarise(total = n_distinct(name))
+
+genauth_area <- dblp_tidy %>%
+  group_by(gender, area) %>%
+  summarise(gencount = n_distinct(name))
+
+left_join(genauth_area, auth_area) %>%
+  mutate(genprop = gencount / total) %>%
+  ggplot() +
+  geom_col(aes(x=area,
+               y=genprop,
+               fill=gender))
+```
+

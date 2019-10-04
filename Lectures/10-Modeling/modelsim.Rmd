@@ -1,0 +1,339 @@
+---
+title: "Simulated model examples"
+author: "Kylie Ariel Bemis"
+date: "11/28/2017"
+output:
+  html_document:
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+## Simulated dataset
+
+First we simulate data:
+
+```{r}
+set.seed(10221989)
+n <- 100
+x1 <- sample(10, n, replace=TRUE) + rnorm(n)
+x2 <- sample(10, n, replace=TRUE) + rnorm(n)
+x3 <- sample(c("foo", "bar"), n, replace=TRUE)
+x4 <- sample(c("baz", "qux"), n, replace=TRUE)
+b1 <- c(-1, -2, 0, -10) + rnorm(4)
+y1 <- b1[1] + b1[2]*x2 + b1[3]*x1 + b1[4]*(x4=="qux") + rnorm(n)
+b2 <- c(-1, -2, -5) + runif(3)
+y2 <- 1.15^{b2[1] + b2[2]*x2 + b2[3]*(x4=="qux") + rnorm(n, sd=2)}
+b3 <- c(-1, -2, -5) + runif(3)
+y3 <- b3[1] + b3[2]*x2^2 + b3[3]*(x3=="bar") + rnorm(n, sd=2)
+sim <- tibble(y1=y1, y2=y2, y3=y3, x1=x1, x2=x2, x3=x3, x4=x4)
+```
+
+View the simulated data:
+
+```{r}
+sim
+```
+
+We will use the simulated dataset above to model the `y` variables based on the explanatory `x` variables.
+
+```{r}
+library(modelr)
+```
+
+For each plot, the correct conclusions are hidden as comments in the folded code. Click "code" to view the interpretations for each plot.
+
+## Modeling y1
+
+### Modeling y1: Identifying predictor/explanatory variables
+
+```{r}
+## We see no obvious pattern here, so we won't use `x1` as a predictor variable at this time.
+
+ggplot(sim) + geom_point(aes(x=x1, y=y1))
+```
+
+```{r}
+## There is an obvious negative linear relationship between `y1` and `x2`, so we will include `x2` as a predictor variable.
+
+ggplot(sim) + geom_point(aes(x=x2, y=y1))
+```
+
+```{r}
+## There is no clear relationship between `y1` and `x3` (if it exists, it is very small), so we won't consider it as a predictor variable right now.
+
+ggplot(sim) + geom_boxplot(aes(x=x3, y=y1))
+```
+
+```{r}
+## It is clear that `y1` takes on different values depending on the level of `x4`, so we will use `x4` as a predictor variable.
+
+ggplot(sim) + geom_boxplot(aes(x=x4, y=y1))
+```
+
+### Modeling y1: Fitting a model
+
+```{r}
+fit1 <- lm(y1 ~ x2 + x4)
+```
+
+### Modeling y1: Residual plots
+
+#### Variables already in the model
+
+```{r}
+## This residual plot shows simple random scatter with no obvious patterns, so there are no linearity assumptions violated with `x2`.
+
+sim %>% add_residuals(fit1) %>%
+  ggplot() + geom_point(aes(x=x2, y=resid))
+```
+
+```{r}
+## This residual plot shows the residuals seem to be centered on 0 for all levels of `x4`, so everything looks okay here too.
+
+sim %>% add_residuals(fit1) %>%
+  ggplot() + geom_boxplot(aes(x=x4, y=resid))
+```
+
+#### Variables not in the model
+
+```{r}
+## After accounting for the variation in `y1` explained by `x2` and `x4`, we now see a clear positive linear relationship between `x1` and the residuals, indicating that `x1` has more information about `y1`, so it would be a good idea to add `x1` to the model as a predictor variable.
+
+sim %>% add_residuals(fit1) %>%
+  ggplot() + geom_point(aes(x=x1, y=resid))
+```
+
+```{r}
+## There is no clear relationship between the residuals and `x3`, so we won't consider adding it to the model at this time.
+
+sim %>% add_residuals(fit1) %>%
+  ggplot() + geom_boxplot(aes(x=x3, y=resid))
+```
+
+### Modeling y1: Re-fit the model
+
+At this stage of the analysis, we have the following model after adding `x1` as a predictor:
+
+```{r}
+lm(y1 ~ x1 + x2 + x4)
+```
+
+## Modeling y2
+
+### Modeling y2: Identifying predictor/explanatory variables
+
+```{r}
+## There is no obvious pattern here, so we won't consider using `x1` as a predictor variable at this time.
+
+ggplot(sim) + geom_point(aes(x=x1, y=y2))
+```
+
+```{r}
+## There is a clear relationship between `x2` and `y2`, but it isn't linear, so we should try some transformations to see if we can make the relationship linear.
+
+ggplot(sim) + geom_point(aes(x=x2, y=y2))
+```
+
+```{r}
+## A log transformation makes the relationship between `x2` and `log(y)` linear, so we will use `x2` as a predictor for `log(y)`.
+
+ggplot(sim) + geom_point(aes(x=x2, y=log(y2)))
+```
+
+```{r}
+## We could also consider if a quadratic relationship is appropriate by plotting `y2` against `x2^2`, but this transformation does not show a linear relationship.
+
+ggplot(sim) + geom_point(aes(x=x2^2, y=y2))
+```
+
+```{r}
+## It is not clear if `y2` differs between the levels of `x3`, so we won't use `x3` as a predictor at this time.
+
+ggplot(sim) + geom_boxplot(aes(x=x3, y=log(y2)))
+```
+
+```{r}
+## It is not clear if `y2` differs between the levels of `x4`, so we won't use `x4` as a predictor at this time.
+
+ggplot(sim) + geom_boxplot(aes(x=x4, y=log(y2)))
+```
+
+### Modeling y2: Fitting a model
+
+To see what happens if we don't transform `y2`, we fit both models:
+
+```{r}
+fit2a <- lm(y2 ~ x2)
+```
+
+```{r}
+fit2b <- lm(log(y2) ~ x2)
+```
+
+### Modeling y2: Residual plots
+
+#### Variables already in the model
+
+```{r}
+## There is a clear pattern in this residual plot, indicating a violation of the assumption of linearity. We should try transforming `x2`, `y2`, or both.
+
+sim %>% add_residuals(fit2a) %>%
+  ggplot() + geom_point(aes(x=x2, y=resid))
+```
+
+```{r}
+## There is no clear pattern here, and we only see simple random scatter, indicating that using a log transformation fixes that problem.
+
+sim %>% add_residuals(fit2b) %>%
+  ggplot() + geom_point(aes(x=x2, y=resid))
+```
+
+#### Variables not in the model
+
+```{r}
+## There is no clear pattern in this residual plot, so we won't consider adding `x1` to the model at this time.
+
+sim %>% add_residuals(fit2b) %>%
+  ggplot() + geom_point(aes(x=x1, y=resid))
+```
+
+```{r}
+## There is no clear pattern in this residual plot, so we won't consider adding `x3` to the model at this time.
+
+sim %>% add_residuals(fit2b) %>%
+  ggplot() + geom_boxplot(aes(x=x3, y=resid))
+```
+
+```{r}
+## The residuals clearly differ between the levels of `x4`, indicating that there is a relationship between `y2` and `x4`, so we should consider adding `x4` to the model as a predictor variable.
+
+sim %>% add_residuals(fit2b) %>%
+  ggplot() + geom_boxplot(aes(x=x4, y=resid))
+```
+
+### Modeling y2: Re-fit the model
+
+At this stage of the analysis, we have the following model:
+
+```{r}
+## Add `x4` as a predictor
+
+lm(log(y2) ~ x2 + x4)
+```
+
+## Modeling y3
+
+### Modeling y3: Identifying predictor/explanatory variables
+
+```{r}
+## There is no clear pattern in this plot, so we won't consider using `y3` as a predictor variable right now.
+
+ggplot(sim) + geom_point(aes(x=x1, y=y3))
+```
+
+```{r}
+## There is an obvious and strong relationship between `x2` and `y3`, but it appears to be non-linear, so we should try transformations to see if we can make the relationship linear.
+
+ggplot(sim) + geom_point(aes(x=x2, y=y3))
+```
+
+```{r}
+## We cannot take the log, because most of the values of `y3` are negative.
+
+ggplot(sim) + geom_point(aes(x=x2, y=log(y3)))
+```
+
+```{r}
+## We try taking the log of negative `y3`, but there is still a non-linear relationship.
+
+ggplot(sim) + geom_point(aes(x=x2, y=log(-y3)))
+```
+
+```{r}
+## If we try taking the log of `x2` as well, we see that much of the relationship becomes linear, but there are large outliers suggesting that the true relationship is not log-log.
+
+ggplot(sim) + geom_point(aes(x=log(x2), y=log(-y3)))
+```
+
+```{r}
+## Trying a quadratic relationship fixes the problem. There is a negative linear relationship between `x2^2` and `y3`.
+
+ggplot(sim) + geom_point(aes(x=x2^2, y=y3))
+```
+
+```{r}
+## There is no obvious difference in `y3` based on the levels of `x3`, so we won't consider `x3` as a predictor variable at this time.
+
+ggplot(sim) + geom_boxplot(aes(x=x3, y=y3))
+```
+
+```{r}
+## There is no obvious difference in `y3` based on the levels of `x4`, so we won't consider `x4` as a predictor variable at this time.
+
+ggplot(sim) + geom_boxplot(aes(x=x4, y=y3))
+```
+
+### Modeling y3: Fitting a model
+
+When fitting higher-order terms, it is appropriate to include all lower-order terms as well. (Among other useful properties, this makes the model invariant to shifts in scale and location.)
+
+```{r}
+fit3 <- lm(y3 ~ x2 + I(x2^2))
+```
+
+### Modeling y3: Residual plots
+
+#### Variables already in the model
+
+```{r}
+## The residual plot shows simple random scatter, suggesting no violation of linearity assumptions for `x2`.
+
+sim %>% add_residuals(fit3) %>%
+  ggplot() + geom_point(aes(x=x2, y=resid))
+```
+
+```{r}
+## The residual plot shows simple random scatter, suggesting no violation of linearity assumptions for `x2^2`.
+
+sim %>% add_residuals(fit3) %>%
+  ggplot() + geom_point(aes(x=x2^2, y=resid))
+```
+
+#### Variables not in the model
+
+```{r}
+## There is no pattern in this residual plot, so we won't consider adding `x1` as a predictor variable.
+
+sim %>% add_residuals(fit3) %>%
+  ggplot() + geom_point(aes(x=x1, y=resid))
+```
+
+```{r}
+## There is a clear difference in the residuals between the levels of `x3`, so we should probably add `x3` as a predictor variable.
+
+sim %>% add_residuals(fit3) %>%
+  ggplot() + geom_boxplot(aes(x=x3, y=resid))
+```
+
+```{r}
+## There is no obvious difference in `y3` between the levels of `x4`, so we won't consider adding `x4` to the model at this time.
+
+sim %>% add_residuals(fit3) %>%
+  ggplot() + geom_boxplot(aes(x=x4, y=resid))
+```
+
+### Modeling y3: Re-fit the model
+
+At this stage of the analysis, we have the following model:
+
+```{r}
+## Add `x3` as a predictor:
+
+lm(y3 ~ x2 + I(x2^2) + x3)
+
+## Since the coefficient of `x2` is very close to 0, we may consider removing it.
+```

@@ -1,0 +1,354 @@
+---
+title: "Sentiment Analysis and Topic Modeling"
+author: "Kylie Ariel Bemis"
+date: "11/6/2018"
+output: beamer_presentation
+fontsize: 10pt
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+options(width=60)
+library(tidyverse)
+library(tidytext)
+```
+
+## Sentiment analysis
+
+*Sentiment analysis* allows us to attach opinions and sentiments to text data in order to analyze its emotional intent or impressions on human readers.
+
+One common way to approach sentiment analysis is by attaching sentiments to individuals words with a common lexicon. The `tidytext` package offers three lexicons for sentiment analysis.
+
+## AFINN sentiments
+
+Positive or negative sentiment score:
+
+```{r}
+get_sentiments("afinn")
+```
+
+## bing sentiments
+
+"Positive" or "negative" only:
+
+```{r}
+get_sentiments("bing")
+```
+
+## nrc sentiments
+
+10 distinct sentiments:
+
+```{r}
+get_sentiments("nrc")
+```
+
+## Analyze sentiment in Jane Austen
+
+Suppose we want to analyze sentiment in Jane Austen's novels.
+
+First, we load the text of her novels into R as a tidy text data frame:
+
+\small
+```{r warning=FALSE}
+library(stringr)
+library(janeaustenr)
+tidy_austen <- austen_books() %>%
+  group_by(book) %>%
+  mutate(linenumber = row_number(),
+         chapter = cumsum(str_detect(text,
+                                     regex("^chapter [\\divxlc]",
+                                           ignore_case = TRUE)))) %>%
+  ungroup() %>%
+  unnest_tokens(word, text)
+```
+\normalsize
+
+---
+
+```{r}
+tidy_austen
+```
+
+## Find words associated with "joy"
+
+```{r joy, eval=FALSE}
+nrcjoy <- get_sentiments("nrc") %>%
+  filter(sentiment == "joy")
+
+tidy_austen %>%
+  inner_join(nrcjoy, by="word") %>%
+  count(book, word, sort=TRUE) %>%
+  mutate(word = reorder(word, n)) %>%
+  group_by(book) %>%
+  top_n(10) %>%
+  ggplot(aes(x=word, y=n)) +
+  geom_col(show.legend=FALSE) +
+  facet_wrap(~book, scales = "free") +
+  coord_flip()
+```
+
+---
+
+```{r joy, echo=FALSE, fig.width=5, fig.height=4}
+```
+
+## Visualize pos/neg sentiment chapter-by-chapter
+
+To visualize the sentiment chapter-by-chapter, we can sum the count of positive and negative sentiments in each chapter.
+
+```{r chapter-sentiment, eval=FALSE}
+austen_sentiment <- tidy_austen %>%
+  inner_join(get_sentiments("bing"), by="word") %>%
+  count(book, chapter, sentiment) %>%
+  spread(sentiment, n, fill = 0L) %>%
+  mutate(sentiment = positive - negative)
+
+austen_sentiment %>%
+  ggplot(aes(chapter, sentiment, fill = book)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~book, ncol = 3, scales = "free_x")
+```
+
+---
+
+```{r chapter-sentiment, echo=FALSE, fig.width=5, fig.height=3}
+```
+
+## Get context for sentiment analysis with bigrams
+
+A major drawback of attaching sentiment to individual words is that we lose the context surrounding each word.
+
+By considering multiple words and words that co-occur with each other, we can introduce an important context for sentiment analysis.
+
+One way to get context for sentiment analysis is by analyzing bigrams.
+
+```{r}
+austen_bigrams <- austen_books() %>%
+  unnest_tokens(bigram, text, token = "ngrams", n = 2) %>%
+  separate(bigram, c("word1", "word2"), sep = " ")
+```
+
+## Words commonly preceded by "not"
+
+```{r}
+austen_bigrams %>%
+  filter(word1 == "not", !word2 %in% stop_words$word) %>%
+  count(word1, word2, sort = TRUE)
+```
+
+## Analyze comonly negated words in Jane Austen
+
+"Not understand" and "not care" should have a very different sentiment attributed to them than "understand" or "care" should.
+
+Let's analyze the most commonly negated words in Jane Austen's novels and attempt to measure their contribution to a sentiment analysis based only on individual words.
+
+```{r}
+negation_words <- c("not", "no", "never", "without")
+
+austen_neg <- austen_bigrams %>%
+  filter(word1 %in% negation_words) %>%
+  inner_join(get_sentiments("afinn"), by = c("word2" = "word")) %>%
+  count(word1, word2, score, sort = TRUE) %>%
+  ungroup()
+```
+
+## Plot most commonly negated words in Jane Austen
+
+```{r neg1, eval=FALSE}
+austen_neg %>%
+  arrange(desc(n)) %>%
+  mutate(word2 = reorder(word2, n)) %>%
+  group_by(word1) %>%
+  top_n(5) %>%
+  ggplot(aes(word2, n)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~word1, scales="free") +
+  coord_flip()
+```
+
+---
+
+```{r neg1, echo=FALSE, fig.width=5, fig.height=3}
+```
+
+## Negated words by contribution to sentiment score
+
+```{r neg2, eval=FALSE}
+austen_neg %>%
+  mutate(contribution = n * score) %>%
+  arrange(desc(abs(contribution))) %>%
+  mutate(word2 = reorder(word2, contribution)) %>%
+  group_by(word1) %>%
+  top_n(10, wt=abs(contribution)) %>%
+  ggplot(aes(word2, contribution, fill = contribution > 0)) +
+  geom_col(show.legend = FALSE) +
+  xlab("Negated words") +
+  ylab("Sentiment contribution") +
+  facet_wrap(~word1, scales="free") +
+  coord_flip()
+```
+
+---
+
+```{r neg2, echo=FALSE, fig.width=5, fig.height=4}
+```
+
+## Topic modeling
+
+In text mining, it is common to have a collection of documents like tweets or emails that we'd like to categorize. *Topic modeling* is the unsupervised classification of text data into discovered categories or topics.
+
+Latent Dirichlet Allocation (LDA) is a common method for fitting topic models. LDA treats each document as a mixture of topics, and each topic as a mixture of words or terms. Rather than being assigned to a distinct topic, this allows documents to overlap in topic.
+
+The `topicmodels` package provides methods for fitting topic models.
+
+## Associate Press data
+
+The `topicmodels` package expects data in the form of a *document-term matrix* rather than the tidy text format. 
+
+Fortunately, it is easy to convert between the two formats, but for now we will investigate the Associated Press data provided by the `topicmodels` package, which is already in the correct format.
+
+\small
+```{r}
+library(topicmodels)
+
+data("AssociatedPress")
+AssociatedPress
+```
+\normalsize
+
+This data is a collection of 2246 news articles. We would like to divide the articles into topics.
+
+## Fit a topic model to AP data
+
+We can use the `LDA()` function from the `topicmodels` package to fit the topic model to the data.
+
+The `tidytext` package provides a `tidy()` function for tidying the results of the fitted model for each parameter for interest.
+
+\small
+```{r}
+# set a seed so the results are reproducible
+ap_lda <- LDA(AssociatedPress, k = 2, control = list(seed = 1234))
+ap_topics <- tidy(ap_lda, matrix = "beta")
+```
+
+---
+
+```{r}
+ap_topics
+```
+\normalsize
+
+## Interpretting topic models
+
+Fitted LDA models have two important parameters of interest:
+
+- **beta** gives the *"word-topic"* probabilities; they are calculated for each word-topic combination, and give the relative importance of each word for that topic
+
+- **gamma** gives the *"document-topic"* probabilities; they are calculated for each document-topic combination, and give the probability that a document belongs to a certain topic
+
+## Plot the most important terms for each topic
+
+```{r ap, eval=FALSE}
+ap_top_terms <- ap_topics %>%
+  group_by(topic) %>%
+  top_n(10, beta) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+ap_top_terms %>%
+  mutate(term = reorder(term, beta)) %>%
+  ggplot(aes(term, beta, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  coord_flip()
+```
+
+---
+
+Finance vs. politics?
+
+```{r ap, echo=FALSE, fig.width=5, fig.height=3}
+```
+
+## Classify Jane Austen novels with topic modeling
+
+Suppose we shuffled the individual chapters from all of Jane Austen's six novels together. Could we figure out which novel each chapter came from?
+
+```{r}
+austen_chapters <- tidy_austen %>%
+  unite(document, book, chapter) %>%
+  anti_join(stop_words) %>%
+  count(document, word, sort=TRUE) %>%
+  ungroup()
+```
+
+---
+
+```{r}
+austen_chapters
+```
+
+## Convert to `DocumentTermMatrix`
+
+We can use the `cast_dtm()` function to convert our tidy text data frame to the document-term matrix format.
+
+```{r warning=FALSE, message=FALSE}
+austen_dtm <- austen_chapters %>% cast_dtm(document, word, n)
+austen_dtm
+```
+
+## Fit a topic model to Jane Austen's chapters
+
+Now we fit a topic model to the Jane Austen chapters, attempting to categorize the data into 6 topics.
+
+```{r}
+library(topicmodels)
+austen_lda <- LDA(austen_dtm, k=6, control=list(seed=5678))
+```
+
+And we find the most important terms for each topic:
+
+```{r}
+top_terms <- austen_lda %>%
+  tidy() %>%
+  group_by(topic) %>%
+  top_n(10, beta) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+```
+
+## Plot the top terms associated with each topic
+
+```{r austen-topics1, eval=FALSE}
+top_terms %>%
+  mutate(term = reorder(term, beta)) %>%
+  ggplot(aes(term, beta, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~topic, scales = "free") +
+  coord_flip()
+```
+
+---
+
+```{r austen-topics1, echo=FALSE, fig.width=5, fig.height=4}
+```
+
+## How often were chapters grouped with their novels?
+
+```{r austen-topics2, eval=FALSE}
+chapters_gamma <- austen_lda %>%
+  tidy(matrix = "gamma")
+
+chapters_gamma %>%
+  separate(document, c("book", "chapter"), sep="_") %>%
+  mutate(book = reorder(book, gamma * topic)) %>%
+  ggplot(aes(factor(topic), gamma)) +
+  geom_boxplot() +
+  facet_wrap(~book)
+```
+
+---
+
+```{r austen-topics2, echo=FALSE, fig.width=5, fig.height=3}
+```

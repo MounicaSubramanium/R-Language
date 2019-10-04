@@ -1,0 +1,593 @@
+---
+title: "R and SQL"
+author: "Kylie Ariel Bemis"
+date: "2/4/2019"
+output: beamer_presentation
+fontsize: 10pt
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+## R and databases
+
+Often, relational data is stored in a database managed by an RDBMS, so we need to know how to work with data in a database.
+
+A database can also be a good solution for data which you do not want to load all into memory at once.
+
+R and `dplyr` can interface with databases through the `DBI` package and a suitable backend:
+
+- `RSQLite` works with SQLite databases
+
+- `RMySQL` works with MySQL databases
+
+- `RPostgreSQL` works with PostgreSQL databases
+
+etc.
+
+We can work with these with `dplyr` using the `dbplyr` package.
+
+## R and databases with `dbplyr`
+
+Suppose we wish to work with an SQLite database.
+
+First we need to install the necessary packages.
+
+```{r eval=FALSE}
+install.packages(c("DBI", "RSQLite", "dbplyr"))
+```
+
+```{r}
+library(dbplyr)
+library(RSQLite)
+```
+
+## Connecting to a database in R
+
+The DBLP is a database containing bibliographic data on major computer science journals and proceedings. A subset of it has been loaded into the SQLite database file "dblp.db".
+
+First, we need to open a *connection* to the database using `dbConnect()`.
+
+The first argument of `dbConnect()` is the backend to use (provided by the `RSQLite` package in this case), and the second is the filepath to the database.
+
+```{r}
+dbpath <- paste0("~/Documents/Northeastern/",
+                 "Courses/DS5110-Spring2019/data/",
+                 "DBLP-CSR-sqlite/dblp.db")
+con <- dbConnect(SQLite(), dbname=dbpath)
+```
+
+## Creating a `tbl` of the connected database
+
+A `tbl` is the tidyverse's generalized notion of tabular data.
+
+A tibble is a type of `tbl`. We can also create a `tbl` from a database.
+
+```{r}
+dblp_main <- tbl(con, "general")
+dblp_authors <- tbl(con, "authors")
+```
+
+The first argument is the data source (our database connection).
+
+The second argument is the name of the table within the database.
+
+Our SQLite database contains the table "general", which has information about papers published in computer science journals and proceedings.
+
+---
+
+```{r}
+dblp_main
+```
+
+---
+
+```{r}
+dblp_authors
+```
+
+---
+
+We can perform `dplyr` operations on the database using `dplyr` verbs.
+
+```{r}
+dblp_main %>% summarise(cs_papers=sum(cs))
+```
+
+---
+
+```{r}
+dblp_main %>%
+  filter(year > 2010) %>%
+  group_by(year) %>%
+  summarise(cs_papers=sum(cs))
+```
+
+---
+
+When working with databases, `dbplyr` tries to offload as much work as possible to the database itself, and delay execution until we need the result.
+
+We can see the actual SQL commands generated using `show_query()`
+
+```{r}
+query <- dblp_main %>%
+  filter(year > 2010) %>%
+  group_by(year) %>%
+  summarise(cs_papers=sum(cs))
+show_query(query)
+```
+
+## Collecting a query into R
+
+The query is not executed until the result is needed. You can use `collect()` to execute the query and pull the result into R.
+
+```{r}
+query %>% collect()
+```
+
+## Pulling database data into R
+
+Not all databases support all `dplyr` data manipulation verbs, so if necessary (and the data is small enough), we can always pull the data into R as a tibble and work that way.
+
+```{r}
+dblp_main %>% collect()
+```
+
+## SQL equivalents to `dplyr` functions
+
+Most functions in `dplyr` are simple and flexible versions of statements in SQL.
+
+- `select()` and SELECT are used to select columns from a table
+
+- `filter()` and WHERE are used to subset a table by on rows based on given conditions
+
+- `arrange()` and ORDER BY are used to order the rows of a table
+
+- `mutate()` does not have a direct equivalent, but AS performs a similar function of returning columns (potentially transformed) with a new name
+
+- `summarise()` does not have a direct equivalent, but SQL provides several summary functions such as SUM, AVG, COUNT, etc.
+
+Let's see some ways to perform the same operations using `dplyr` and SQL.
+
+## `select()` and SELECT
+
+```{r eval=FALSE}
+dblp_authors %>% select(k, name, gender)
+```
+
+```{r eval=FALSE}
+query <- con %>%
+  dbSendQuery("SELECT k, name, gender
+              FROM authors")
+result <- as_tibble(dbFetch(query))
+dbClearResult(query)
+result
+```
+
+---
+
+```{r echo=FALSE}
+dblp_authors %>% select(k, name, gender)
+```
+
+## `filter()` and WHERE
+
+```{r eval=FALSE}
+dblp_authors %>% filter(gender == "F")
+```
+
+```{r eval=FALSE}
+query <- con %>%
+  dbSendQuery("SELECT *
+              FROM authors
+              WHERE gender = 'F'")
+result <- as_tibble(dbFetch(query))
+dbClearResult(query)
+result
+```
+
+---
+
+```{r echo=FALSE}
+dblp_authors %>% filter(gender == "F")
+```
+
+## `filter()` and WHERE (cont'd)
+
+```{r eval=FALSE}
+dblp_authors %>% filter(gender == "F" & prob > 0.95)
+```
+
+```{r eval=FALSE}
+query <- con %>%
+  dbSendQuery("SELECT *
+              FROM authors
+              WHERE gender = 'F' AND prob > 0.95")
+result <- as_tibble(dbFetch(query))
+dbClearResult(query)
+result
+```
+
+---
+
+```{r echo=FALSE}
+dblp_authors %>% filter(gender == "F" & prob > 0.95)
+```
+
+## `arrange()` and ORDER BY
+
+```{r eval=FALSE}
+dblp_authors %>% arrange(name)
+```
+
+```{r eval=FALSE}
+query <- con %>%
+  dbSendQuery("SELECT *
+              FROM authors
+              ORDER BY name")
+result <- as_tibble(dbFetch(query))
+dbClearResult(query)
+result
+```
+
+---
+
+```{r echo=FALSE}
+dblp_authors %>% arrange(name)
+```
+
+## `mutate()` and AS
+
+```{r eval=FALSE}
+dblp_authors %>%
+  mutate(pos1 = pos + 1) %>%
+  select(k, pos1, name)
+```
+
+```{r eval=FALSE}
+query <- con %>%
+  dbSendQuery("SELECT k, pos + 1 AS pos1, name
+              FROM authors")
+result <- as_tibble(dbFetch(query))
+dbClearResult(query)
+result
+```
+
+---
+
+```{r echo=FALSE}
+dblp_authors %>%
+  mutate(pos1 = pos + 1) %>%
+  select(k, pos1, name)
+```
+
+## `summarise()` and COUNT, AVG, SUM, etc.
+
+```{r eval=FALSE}
+dblp_authors %>% summarize(mean(prob))
+```
+
+```{r eval=FALSE}
+query <- con %>%
+  dbSendQuery("SELECT AVG(prob)
+              FROM authors")
+result <- as_tibble(dbFetch(query))
+dbClearResult(query)
+result
+```
+
+---
+
+```{r echo=FALSE}
+dblp_authors %>% summarize(mean(prob))
+```
+
+## `group_by()` and COUNT, AVG, SUM, etc.
+
+```{r eval=FALSE}
+dblp_authors %>%
+  group_by(gender) %>%
+  summarize(n())
+```
+
+```{r eval=FALSE}
+query <- con %>%
+  dbSendQuery("SELECT gender, COUNT() AS n
+              FROM authors
+              GROUP BY gender")
+result <- as_tibble(dbFetch(query))
+dbClearResult(query)
+result
+```
+
+---
+
+```{r echo=FALSE}
+dblp_authors %>%
+  group_by(gender) %>%
+  summarize(n())
+```
+
+## More joins in SQL and R
+
+![](sql-joins.png)
+
+---
+
+```{r}
+x <- tribble(
+  ~key, ~val_x,
+     1, "x1",
+     2, "x2",
+     3, "x3"
+)
+y <- tribble(
+  ~key, ~val_y,
+     1, "y1",
+     2, "y2",
+     4, "y3"
+)
+```
+
+---
+
+```{r}
+con2 <- dbConnect(SQLite(), ":memory:")
+dbWriteTable(con2, "x", x)
+dbWriteTable(con2, "y", y)
+x <- tbl(con2, "x")
+y <- tbl(con2, "y")
+```
+
+## Inner joins
+
+```{r eval=FALSE}
+inner_join(x, y, by="key")
+
+query <- con2 %>%
+  dbSendQuery("SELECT x.key AS key, val_x, val_y
+              FROM x
+              INNER JOIN y USING(key)")
+result <- as_tibble(dbFetch(query))
+dbClearResult(query)
+result
+```
+
+---
+
+```{r}
+inner_join(x, y)
+```
+
+## Inner joins (cont'd)
+
+```{r eval=FALSE}
+inner_join(x, y, by=c("key", "key"))
+```
+
+```{r eval=FALSE}
+query <- con2 %>%
+  dbSendQuery("SELECT x.key AS key, val_x, val_y
+              FROM x
+              INNER JOIN y ON x.key = y.key")
+result <- as_tibble(dbFetch(query))
+dbClearResult(query)
+result
+```
+
+---
+
+```{r}
+inner_join(x, y, by=c("key", "key"))
+```
+
+## Left joins
+
+```{r eval=FALSE}
+left_join(x, y)
+```
+
+```{r eval=FALSE}
+query <- con2 %>%
+  dbSendQuery("SELECT x.key AS key, val_x, val_y
+              FROM x
+              LEFT JOIN y ON x.key = y.key")
+result <- as_tibble(dbFetch(query))
+dbClearResult(query)
+result
+```
+
+---
+
+```{r}
+left_join(x, y)
+```
+
+## Left excluding joins
+
+```{r eval=FALSE}
+x %>% left_join(y) %>% anti_join(y)
+```
+
+```{r eval=FALSE}
+query <- con2 %>%
+  dbSendQuery("SELECT x.key AS key, val_x, val_y
+              FROM x
+              LEFT JOIN y ON x.key = y.key
+              WHERE y.key IS NULL")
+result <- as_tibble(dbFetch(query))
+dbClearResult(query)
+result
+```
+
+---
+
+```{r}
+x %>% left_join(y) %>% anti_join(y)
+```
+
+## Right joins
+
+```{r eval=FALSE}
+# not supported by SQLite
+right_join(x, y)
+
+# not supported by SQLite
+query <- con2 %>%
+  dbSendQuery("SELECT x.key AS key, val_x, val_y
+              FROM x
+              RIGHT JOIN y ON x.key = y.key")
+```
+
+---
+
+```{r error=TRUE}
+right_join(x, y)
+```
+
+## Thoughts on SQL vs `dplyr`
+
+Some basic SQL rules:
+
+- SQL statements that retrieve data from the database begin with SELECT; use `*` to select all columns
+
+    + You don't need to use `dplyr::select()` unless you're subsetting columns
+
+- In SQL statements, you always need to specify the table(s) you are manipulating
+
+    + In `dplyr`, each table will usually be a separate variable
+
+- SQL expect clauses following SELECT to be in a particular order
+
+    + You can apply `dplyr` functions in any order (though results may differ)
+
+## Thoughts on SQL vs `dplyr` (cont'd)
+
+Advantages and disadvantages:
+
+- It is easy to chain functions seperately in `dplyr` and see intermediate results; this may be more difficult in SQL
+    
+- Reasoning about tables and operations may be easier when you can see intermediate results like this
+    
+- Some complex SQL operations are not supported by `dplyr` directly
+    
+- If the data fits in memory, you can use R programming to perform more complex operations
+    
+- If the data does not fit in memory, you may need to use SQL to perform the complex operation on the database
+    
+- Use whichever is easier for you, then pull data into R for visualization and analysis.
+
+It is always good to be familiar with all available tools. Most data science workflows will involve incorporating multiple tools
+
+## Relational data examples with DBLP
+
+Let's go back to the DBLP dataset for more practice with `dbplyr`.
+
+Calculate the total number of distinct authors in the dataset.
+
+```{r}
+dblp_authors %>%
+  summarise(num_papers = n(),
+            num_authors = n_distinct(name))
+```
+
+---
+
+Calculate and plot the number of distinct authors published each year.
+
+```{r auth-year, eval=FALSE}
+dblp_authors %>%
+  left_join(dblp_main) %>%
+  group_by(year) %>%
+  summarise(num_authors = n_distinct(name)) %>%
+  collect() %>%
+  ggplot() +
+  geom_col(aes(x=year, y=num_authors))
+```
+
+---
+
+```{r auth-year, echo=FALSE}
+```
+
+---
+
+Calculate and plot the number of papers published in CS, DE, SE, and TH.
+
+```{r message=FALSE}
+dblp_tidy <- dblp_authors %>%
+  left_join(dblp_main) %>%
+  select(k, year, conf, name, gender, prob, cs, de, se, th) %>%
+  collect() %>%
+  gather(key="area", value="indicator", cs, de, se, th) %>%
+  filter(indicator == 1) %>%
+  select(-indicator) %>%
+  filter(gender %in% c('M', 'F'))
+```
+
+Some papers may belong to multiple areas, so we will count such a paper multiple times, once for each area. Since we are primarily interested in comparing between different areas of computer science, this is fine. However, if we wanted to count each paper only once, a different approach (adding an additional column for "interdisciplinary"?) would be required.
+
+```{r cs-area, eval=FALSE}
+ggplot(dblp_tidy) + geom_bar(aes(x=area))
+```
+
+---
+
+```{r cs-area, echo=FALSE}
+```
+
+---
+
+Plot the number of papers published in CS, DE, SE, and TH by gender.
+
+```{r}
+ggplot(dblp_tidy) + geom_bar(aes(x=area, fill=gender))
+```
+
+---
+
+Plot the number of distinct men and women published in CS, DE, SE, and TH.
+
+```{r gender-area, eval=FALSE}
+dblp_tidy %>%
+  group_by(gender, area) %>%
+  summarise(count = n_distinct(name)) %>%
+  collect() %>%
+  ggplot() +
+  geom_col(aes(x=area, y=count, fill=gender))
+```
+
+---
+
+```{r gender-area, echo=FALSE}
+```
+
+---
+
+Plot the proportion of distinct men and women published in CS, DE, SE, and TH.
+
+```{r genauth-area, eval=FALSE}
+auth_area <- dblp_tidy %>%
+  group_by(area) %>%
+  summarise(total = n_distinct(name))
+
+genauth_area <- dblp_tidy %>%
+  group_by(gender, area) %>%
+  summarise(gencount = n_distinct(name))
+
+left_join(genauth_area, auth_area) %>%
+  mutate(genprop = gencount / total) %>%
+  ggplot() +
+  geom_col(aes(x=area,
+               y=genprop,
+               fill=gender))
+```
+
+---
+
+```{r genauth-area, echo=FALSE, message=FALSE}
+```
+
+

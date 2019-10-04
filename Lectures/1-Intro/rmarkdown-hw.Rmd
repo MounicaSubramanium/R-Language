@@ -1,0 +1,56 @@
+---
+title: "DS5110 HW 0"
+author: "Kylie Bemis"
+date: "1/8/2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Problem 1
+
+First, load the `ggplot2` visualization package.
+
+```{r, message=FALSE}
+library(ggplot2)
+```
+
+Print the dataset:
+
+```{r}
+diamonds
+```
+
+We can use the `ggplot2` package to visualize the `diamonds` dataset, which is included in the package:
+
+```{r, message=FALSE, fig.height=3, fig.width=5}
+ggplot(diamonds, aes(x=carat, y=price, color=clarity)) +
+  geom_point() +
+  geom_smooth() +
+  labs(title="Diamond Price vs Carat")
+```
+
+## Problem 2
+
+Now we load the `gapminder` package, which includes a dataset on life expectancy, GDP per capita, and population by country.
+
+```{r}
+library(gapminder)
+```
+
+Print the dataset:
+
+```{r}
+gapminder
+```
+
+Now we can use `ggplot2` to visualize the data:
+
+```{r, message=FALSE, fig.height=3, fig.width=5}
+ggplot(gapminder, aes(x=year, y=lifeExp, color=continent)) +
+  geom_point() +
+  geom_smooth() +
+  labs(title="Life expectancy vs Year")
+```

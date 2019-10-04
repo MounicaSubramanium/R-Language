@@ -1,0 +1,286 @@
+---
+title: "MapReduce"
+author: "Kylie Ariel Bemis"
+date: "4/6/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Fundamentals of MapReduce
+
+Although Hadoop is the most well-known and widely used implementation of Google's MapReduce algorithm, MapReduce describes a general processing strategy that can be implemented in any language. This vignette illustrates the fundamentals of MapReduce with a naive pure-R implementation in "standalone" (i.e., non-distributed) mode.
+
+## Motivating example
+
+We begin with a simple task: count the number of each word in a document. We will first do this without using MapReduce.
+
+First, we read in the lines of Jane Austen's _Pride and Prejudice_, downloaded from Project Gutenberg.
+
+```{r}
+prideprejudice <- readLines("prideprejudice.txt")
+
+head(prideprejudice, n=11)
+```
+
+Next we write a function that strips unwanted characters and splits the lines on white space, returning only the individual words.
+
+```{r}
+tokenize <- function(s) {
+  s <- gsub("[_,.;:\'\"()]","", tolower(s))
+  strsplit(s, "\\s+")
+}
+
+tokenize(prideprejudice[10])
+```
+
+Note that `gsub()` and `strsplit()` are vectorized, so they return a list.
+
+This means we can apply `tokenize()` to all of the lines at once and combine them together, then use `table()` to get the word counts.
+
+```{r}
+wc_simple <- function(lines) {
+  words <- do.call("c", tokenize(prideprejudice))
+  table(words)
+}
+
+tail(wc_simple(prideprejudice))
+```
+
+We missed some unwanted characters that we'd prefer to remove, but that's fine for now.
+
+## Implementing MapReduce
+
+Now we set about implementing MapReduce, with the final goal of replicating the results of `wc_simple()`.
+
+#### Utility functions
+
+Because the Map and Reduce steps operate on key-value pairs, we begin by implenting simple functions for working with key-value pairs.
+
+We will actually just use R's `list` structure, using the elements as the values, and the names as the keys.
+
+```{r}
+# Create a list of key-value pairs
+keyvals <- function(keys, values) {
+  values <- as.list(values)
+  names(values) <- keys
+  values
+}
+```
+
+```{r}
+# Extract keys from list of key-value pairs
+keys <- function(x) {
+  if ( !is.null(names(x)) ) {
+    names(x) 
+  } else {
+    seq_along(x)
+  }
+}
+
+# Extract values from list of key-value pairs
+values <- function(x) unname(x)
+```
+
+Since we'll be working a lot with lists, these will be a useful utility functions to have, too.
+
+```{r}
+# Having this will be useful
+unlist_once <- function(x) {
+  unlist(x, recursive=FALSE)
+}
+
+unlist_twice <- function(x) {
+  unlist_once(unlist_once(x))
+}
+```
+
+#### Split function
+
+One task that our MapReduce implementation must do is split the data between some mappers and reducers. We implement a simple function that does this below. It is not the most efficient memory-wise, but it will suffice for our purposes.
+
+```{r}
+# Split tasks according to number of jobs
+split_tasks <- function(input, num.tasks) {
+  if ( !is.null(dim(input)) ) {
+    len <- nrow(input) 
+  } else {
+    len <- length(input)
+  }
+  unname(split(input, cut(seq_len(len), breaks=num.tasks)))
+}
+```
+
+#### Map step
+
+```{r}
+# Map step
+map <- function(input, mapper, map.tasks) {
+  map.in <- split_tasks(input, map.tasks)
+  map.out <- Map(mapper, keys(map.in), values(map.in), USE.NAMES=FALSE)
+  map.out <- unlist_once(map.out)
+  map.out
+}
+```
+
+#### Shuffle step
+
+```{r}
+# Shuffle/sort step, using 'names' as keys
+shuffle <- function(input) {
+  shuffle.out <- list()
+  for ( i in 1:length(input) ) {
+    key <- names(input)[i]
+    if ( is.null(key) || nchar(key) == 0 ) next
+    shuffle.out[[key]] <- c(shuffle.out[[key]], input[[i]])
+  }
+  shuffle.out
+}
+```
+
+#### Reduce step
+
+```{r}
+# Reduce step
+reduce <- function(input, reducer, reduce.tasks) {
+  reduce.in <- split_tasks(input, reduce.tasks)
+  reduce.out <- lapply(reduce.in, function(chunk) {
+    Map(reducer, keys(chunk), values(chunk), USE.NAMES=FALSE)
+  })
+  reduce.out <- unlist_twice(reduce.out)
+  reduce.out
+}
+```
+
+#### Put it all together
+
+```{r}
+mapreduce <- function(x, mapper, reducer, map.tasks=10, reduce.tasks=2) {
+  
+  # Map step
+  map.out <- map(x, mapper, map.tasks)
+  
+  # Shuffle/Sort by keys
+  shuffle.out <- shuffle(map.out)
+ 
+  # Reduce step
+  reduce.out <- reduce(shuffle.out, reducer, reduce.tasks)
+  
+  # Prepare and return final output
+  final.out <- reduce.out[order(names(reduce.out))] # sort by keys (names)
+  final.out
+}
+```
+
+## Write the mapper and reducer functions
+
+Now we write the mapper and reducer functions for our word count example.
+
+The mapper function takes a key-value pair, which in our case corresponds to a chunk of text, and outputs a list of key-value pairs. The keys are the observed words, and the values are simply 1. The values will be added together by the reducer to get the word count.
+
+```{r}
+# Word count mapper
+map_wc <- function(key, values) {
+  words <- unlist(tokenize(values))
+  ones <- rep(1, length(words))
+  keyvals(keys=words, values=ones)
+}
+```
+
+```{r}
+# Example mapper input
+ex1 <- list(`1`=prideprejudice[1:11])
+ex1
+
+map_wc(keys(ex1)[1], values(ex1)[[1]])
+```
+
+The reducer function also takes a key-value(s) pair, and outputs a new value for the same key. The key will be a word, and the values will be a vector of 1s, with a 1 for each time the word was observed. We sum up the values and return the total count.
+
+```{r}
+# Word count reducer
+reduce_wc <- function(key, values) {
+  count <- sum(values)
+  keyvals(keys=key, values=count)
+}
+```
+
+```{r}
+# Example reducer input
+ex2 <- list("youth"=rep(1, 9))
+ex2
+
+reduce_wc(keys(ex2)[1], values(ex2)[[1]])
+```
+
+## Wordcount example
+
+Now we can run our simple MapReduce implementation on the whole document, and we can see that we get the same results as before.
+
+```{r}
+wc_mr <- mapreduce(prideprejudice, mapper=map_wc, reducer=reduce_wc,
+                   map.tasks=14, reduce.tasks=10)
+
+tail(unlist(wc_mr))
+```
+
+Note that we can change the number of mappers and reducers and we get the same results. This allows MapReduce to scale easily to very large data, and offers customization depending on how your particular job scales (whether it wants more mappers or more reducers, etc.).
+
+```{r}
+wc_mr2 <- mapreduce(prideprejudice, mapper=map_wc, reducer=reduce_wc,
+                   map.tasks=5, reduce.tasks=3)
+
+tail(unlist(wc_mr2))
+```
+
+In our implementation, the calculations are very simple, and the dataset is small, so the overhead of splitting and shuffling the data is far greater than any potential computational improvements we might see even if we took the time to make our code distributed (which it currently is not).
+
+As an exercise, how would you make this code distributed?
+
+## Linear regression example
+
+We can also apply the MapReduce approach to modeling.
+
+First, we motivate our example by fitting a simple linear regression model to the flights dataset.
+
+```{r}
+library(nycflights13)
+
+fit <- lm(arr_delay ~ dep_delay, data=flights)
+fit
+```
+
+We will use a divide and recombine (D&R) approach to the statistical analysis in order to apply MapReduce. The strategy is to divide the data into subsets, fit linear models on the subsets, and then recombine the fitted results.
+
+First, we write a mapper that fits a linear model for one data subset and outputs the coefficients. We always assign the key to 1 (but any constant would work), because we want to recombine all of the models in the same reducer.
+
+```{r}
+map_lm <- function(key, values) {
+  fit <- lm(arr_delay ~ dep_delay, data=values)
+  coefs <- coef(fit)
+  keyvals(key=1, values=list(coefs))
+}
+```
+
+Now we write a reduce function. The values will be a list of the fitted coefficients. To get the average for each coefficient, we'll turn them into a matrix and use `rowSums()`. We can then divide the MapReduce output by the number of mappers to get the D&R parameter estimates.
+
+```{r}
+reduce_lm <- function(key, values) {
+  coefs <- rowSums(matrix(unlist(values), nrow=2))
+  keyvals(key=key, values=list(coefs))
+}
+```
+
+Now we fit the D&R models using MapReduce. The resulting coefficients are very close to the coefficients calculated on the whole dataset.
+
+```{r}
+n <- 10
+lm_mr <- mapreduce(flights, mapper=map_lm, reducer=reduce_lm, map.tasks=n)
+DnR_coefs <- lm_mr[[1]] / n
+DnR_coefs
+```
+
+For further reading on Divide & Recombine, see http://ml.stat.purdue.edu/hafen/preprints/Guha_Stat_2012.pdf.
+
